@@ -7,6 +7,16 @@ pub type Word = u16;
 
 const MAX_MEM: u32 = 1024 * 64;
 
+#[derive(Clone, Copy)]
+pub struct CPU {
+    pub processor_status: ProcessorStatus,
+    pub program_counter: Word,
+    pub stack_pointer: Byte,
+    pub accumulator: Byte,
+    pub register_x: Byte,
+    pub register_y: Byte,
+}
+
 impl CPU {
     pub fn execute(&mut self, mut cycles: i32, memory: &mut Memory) -> i32 {
         let cycles_requested: i32 = cycles.clone();
@@ -43,32 +53,12 @@ impl CPU {
                     self.load_register(&mut cycles, address, &RegisterType::Accumulator, &memory);
                 }
                 instructions::INSTRUCTION_LDA_INDR_X => {
-                    let mut zero_page_addr: Byte = self.fetch_byte(&mut cycles, &memory);
-                    zero_page_addr += self.register_x;
-                    cycles -= 1;
-                    let effective_address: Word =
-                        self.read_word(&mut cycles, zero_page_addr as Word, &memory);
-                    self.load_register(
-                        &mut cycles,
-                        effective_address,
-                        &RegisterType::Accumulator,
-                        &memory,
-                    );
+                    let address = self.get_indr_addr_x(&mut cycles, &memory);
+                    self.load_register(&mut cycles, address, &RegisterType::Accumulator, &memory);
                 }
                 instructions::INSTRUCTION_LDA_INDR_Y => {
-                    let zero_page_addr: Byte = self.fetch_byte(&mut cycles, &memory);
-                    let effective_address: Word =
-                        self.read_word(&mut cycles, zero_page_addr as Word, &memory);
-                    let effective_address_plus_y = effective_address + self.register_y as Word;
-                    if (effective_address_plus_y & 0xFF00) != (effective_address & 0xFF00) {
-                        cycles -= 1;
-                    }
-                    self.load_register(
-                        &mut cycles,
-                        effective_address_plus_y,
-                        &RegisterType::Accumulator,
-                        &memory,
-                    );
+                    let address = self.get_indr_addr_y(&mut cycles, &memory);
+                    self.load_register(&mut cycles, address, &RegisterType::Accumulator, &memory);
                 }
 
                 // LDX
@@ -116,12 +106,75 @@ impl CPU {
                 }
 
                 //
+                // Store Registers
+                //
+
+                // STA
+                instructions::INSTRUCTION_STA_ZERO => {
+                    let address: Word = self.get_zero_page_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_ZERO_X => {
+                    let address: Word = self.get_zero_page_addr_x(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_ABS => {
+                    let address: Word = self.get_absolute_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_ABS_X => {
+                    let address: Word = self.get_absolute_addr_x_5(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_ABS_Y => {
+                    let address: Word = self.get_absolute_addr_y_5(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_INDR_X => {
+                    let address = self.get_indr_addr_x(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+                instructions::INSTRUCTION_STA_INDR_Y => {
+                    let address = self.get_indr_addr_y_6(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.accumulator, memory);
+                }
+
+                // STX
+                instructions::INSTRUCTION_STX_ZERO => {
+                    let address: Word = self.get_zero_page_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_x, memory);
+                }
+                instructions::INSTRUCTION_STX_ABS => {
+                    let address: Word = self.get_absolute_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_x, memory);
+                }
+                instructions::INSTRUCTION_STX_ZERO_Y => {
+                    let address: Word = self.get_zero_page_addr_y(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_x, memory);
+                }
+
+                // STY
+                instructions::INSTRUCTION_STY_ZERO => {
+                    let address: Word = self.get_zero_page_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_y, memory);
+                }
+                instructions::INSTRUCTION_STY_ABS => {
+                    let address: Word = self.get_absolute_addr(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_y, memory);
+                }
+                instructions::INSTRUCTION_STY_ZERO_X => {
+                    let address: Word = self.get_zero_page_addr_x(&mut cycles, &memory);
+                    self.write_byte(&mut cycles, address, self.register_y, memory);
+                }
+
+                //
                 instructions::INSTRUCTION_JSR => {
                     let subroutine_addr: Word = self.fetch_word(&mut cycles, &memory);
-                    memory.write_word(
+                    self.write_word(
                         &mut cycles,
                         subroutine_addr,
-                        self.program_counter.wrapping_sub(1) as u32,
+                        self.program_counter.wrapping_sub(1),
+                        memory,
                     );
                     self.program_counter = subroutine_addr;
                     cycles -= 1;
@@ -137,13 +190,14 @@ impl CPU {
         }
         cycles_requested - cycles
     }
+
     pub fn reset() -> Self {
         Self {
             program_counter: 0xFFFC,
-            stack_pointer: 0x0100,
-            accumulator: 0,
-            register_x: 0,
-            register_y: 0,
+            stack_pointer: 0x00,
+            accumulator: 0x00,
+            register_x: 0x00,
+            register_y: 0x00,
             processor_status: ProcessorStatus(0x00000000),
         }
     }
@@ -168,16 +222,27 @@ impl CPU {
         }
     }
 
-    fn read_byte(&mut self, cycles: &mut i32, address: Word, memory: &Memory) -> Byte {
+    fn read_byte(&self, cycles: &mut i32, address: Word, memory: &Memory) -> Byte {
         let data: Byte = memory.data[address as usize];
         *cycles -= 1;
         data
     }
 
-    fn read_word(&mut self, cycles: &mut i32, address: Word, memory: &Memory) -> Word {
+    fn write_byte(&self, cycles: &mut i32, address: Word, data: Byte, memory: &mut Memory) {
+        memory.data[address as usize] = data;
+        *cycles -= 1;
+    }
+
+    fn read_word(&self, cycles: &mut i32, address: Word, memory: &Memory) -> Word {
         let low: Byte = self.read_byte(cycles, address, &memory);
         let high: Byte = self.read_byte(cycles, address + 1, &memory);
         low as Word | ((high as Word) << 8)
+    }
+
+    pub fn write_word(&self, cycles: &mut i32, word: Word, address: Word, memory: &mut Memory) {
+        memory.data[address as usize] = (word & 0xFF) as Byte;
+        memory.data[(address + 1) as usize] = (word >> 8) as Byte;
+        *cycles -= 2;
     }
 
     fn fetch_byte(&mut self, cycles: &mut i32, memory: &Memory) -> Byte {
@@ -224,6 +289,31 @@ impl CPU {
         zero_page_address as Word
     }
 
+    fn get_indr_addr_x(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let mut address: Byte = self.fetch_byte(cycles, memory);
+        address += self.register_x;
+        *cycles -= 1;
+        self.read_word(cycles, address as Word, memory)
+    }
+
+    fn get_indr_addr_y(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let zero_page_addr: Byte = self.fetch_byte(cycles, memory);
+        let effective_address: Word = self.read_word(cycles, zero_page_addr as Word, memory);
+        let effective_address_plus_y = effective_address + self.register_y as Word;
+        if (effective_address_plus_y & 0xFF00) != (effective_address & 0xFF00) {
+            *cycles -= 1;
+        }
+        effective_address_plus_y
+    }
+
+    fn get_indr_addr_y_6(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let zero_page_addr: Byte = self.fetch_byte(cycles, memory);
+        let effective_address: Word = self.read_word(cycles, zero_page_addr as Word, memory);
+        let effective_address_plus_y = effective_address + self.register_y as Word;
+        *cycles -= 1;
+        effective_address_plus_y
+    }
+
     fn get_absolute_addr(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
         self.fetch_word(cycles, &memory)
     }
@@ -245,16 +335,20 @@ impl CPU {
         }
         absolute_addr_plus_y
     }
-}
 
-#[derive(Clone, Copy)]
-pub struct CPU {
-    pub processor_status: ProcessorStatus,
-    pub program_counter: Word,
-    pub stack_pointer: Word,
-    pub accumulator: Byte,
-    pub register_x: Byte,
-    pub register_y: Byte,
+    fn get_absolute_addr_x_5(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let absolute_addr: Word = self.fetch_word(cycles, &memory);
+        let absolute_addr_plus_x = absolute_addr + self.register_x as Word;
+        *cycles -= 1;
+        absolute_addr_plus_x
+    }
+
+    fn get_absolute_addr_y_5(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let absolute_addr: Word = self.fetch_word(cycles, &memory);
+        let absolute_addr_plus_y = absolute_addr + self.register_y as Word;
+        *cycles -= 1;
+        absolute_addr_plus_y
+    }
 }
 
 bitfield! {
@@ -279,12 +373,6 @@ impl Memory {
         Self {
             data: [0x00000000; MAX_MEM as usize],
         }
-    }
-
-    pub fn write_word(&mut self, cycles: &mut i32, word: Word, address: u32) {
-        self.data[address as usize] = (word & 0xFF) as Byte;
-        self.data[(address + 1) as usize] = (word >> 8) as Byte;
-        *cycles -= 2;
     }
 }
 

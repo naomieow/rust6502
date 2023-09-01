@@ -73,7 +73,7 @@ fn sta_indirect_y_can_store_accumulator_into_memory() {
     let cpu_copy = cpu.clone();
     cpu.accumulator = 0x42;
     cpu.register_y = 0x0F;
-    memory.data[0xFFFC] = INSTRUCTION_STA_INDR_X;
+    memory.data[0xFFFC] = INSTRUCTION_STA_INDR_Y;
     memory.data[0xFFFD] = 0x20;
     memory.data[0xFFFE] = 0x00;
     memory.data[0x0020] = 0x00;
@@ -92,7 +92,7 @@ fn stx_zeropage_can_store_register_x_into_memory() {
 
 #[test]
 fn stx_zeropage_with_offset_y_can_store_register_x_into_memory() {
-    store_register_zeropage_x(INSTRUCTION_STX_ZERO_Y, RegisterType::RegisterX);
+    store_register_zeropage_y(INSTRUCTION_STX_ZERO_Y, RegisterType::RegisterX);
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn sty_zeropage_can_store_register_y_into_memory() {
 
 #[test]
 fn sty_zeropage_with_offset_x_can_store_register_y_into_memory() {
-    store_register_zeropage_y(INSTRUCTION_STY_ZERO, RegisterType::RegisterY);
+    store_register_zeropage_x(INSTRUCTION_STY_ZERO_X, RegisterType::RegisterY);
 }
 
 #[test]
