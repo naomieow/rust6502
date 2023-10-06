@@ -44,3 +44,4 @@ pub const INSTRUCTION_LDY_ABS: Byte = 0xAC;
 pub const INSTRUCTION_LDY_ABS_X: Byte = 0xBC;
 
 pub const INSTRUCTION_JSR: Byte = 0x20;
+pub const INSTRUCTION_RTS: Byte = 0x60;

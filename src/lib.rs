@@ -170,14 +170,16 @@ impl CPU {
                 //
                 instructions::INSTRUCTION_JSR => {
                     let subroutine_addr: Word = self.fetch_word(&mut cycles, &memory);
-                    self.write_word(
-                        &mut cycles,
-                        subroutine_addr,
-                        self.program_counter.wrapping_sub(1),
-                        memory,
-                    );
+                    self.push_program_counter_to_stack(&mut cycles, memory);
                     self.program_counter = subroutine_addr;
                     cycles -= 1;
+                }
+                instructions::INSTRUCTION_RTS => {
+                    let return_addr: Word =
+                        self.read_word(&mut cycles, self.stack_pointer_as_word(), memory);
+                    self.pop_word_from_stack(&mut cycles, &memory);
+                    self.program_counter = return_addr + 1;
+                    cycles -= 2;
                 }
                 _ => {
                     panic!(
@@ -194,12 +196,33 @@ impl CPU {
     pub fn reset() -> Self {
         Self {
             program_counter: 0xFFFC,
-            stack_pointer: 0x00,
+            stack_pointer: 0xFF,
             accumulator: 0x00,
             register_x: 0x00,
             register_y: 0x00,
             processor_status: ProcessorStatus(0x00000000),
         }
+    }
+
+    fn stack_pointer_as_word(&self) -> Word {
+        self.stack_pointer as Word | 0x100
+    }
+
+    fn push_program_counter_to_stack(&mut self, cycles: &mut i32, memory: &mut Memory) {
+        self.write_word(
+            cycles,
+            self.stack_pointer_as_word() - 1,
+            self.program_counter.wrapping_sub(1),
+            memory,
+        );
+        self.stack_pointer -= 2;
+    }
+
+    fn pop_word_from_stack(&mut self, cycles: &mut i32, memory: &Memory) -> Word {
+        let value: Word = self.read_word(cycles, self.stack_pointer_as_word() + 1, &memory);
+        self.stack_pointer += 2;
+        *cycles -= 1;
+        value
     }
 
     fn load_register(
@@ -352,16 +375,28 @@ impl CPU {
 }
 
 bitfield! {
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct ProcessorStatus(Byte);
     Byte;
-    pub carry, _: 1;
+    pub carry, set_carry: 1;
     pub zero, set_zero: 2;
-    pub interrupt, _: 3;
-    pub decimal, _: 4;
-    pub r#break, _: 5;
-    pub overflow, _: 6;
+    pub interrupt, set_interrupt: 3;
+    pub decimal, set_decimal: 4;
+    pub r#break, set_break: 5;
+    pub overflow, set_overflow: 6;
     pub negative, set_negative: 7;
+}
+
+impl PartialEq for ProcessorStatus {
+    fn eq(&self, rhs: &ProcessorStatus) -> bool {
+        self.carry() == rhs.carry()
+            && self.zero() == rhs.zero()
+            && self.interrupt() == rhs.interrupt()
+            && self.decimal() == rhs.decimal()
+            && self.r#break() == rhs.r#break()
+            && self.overflow() == rhs.overflow()
+            && self.negative() == rhs.negative()
+    }
 }
 
 pub struct Memory {
